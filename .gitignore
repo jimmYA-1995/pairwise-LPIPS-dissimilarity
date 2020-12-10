@@ -1,0 +1,5 @@
+dists/
+logs/
+*.npy
+*/*.ipynb_checkpoints
+__pycache__

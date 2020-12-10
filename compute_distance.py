@@ -4,18 +4,22 @@ import argparse
 import random
 import pickle
 from pathlib import Path
-from time import time, sleep
+from time import time
 
 import numpy as np
 import torch
 import torch.nn as nn
-# from sklearn.manifold import MDS
-# import matplotlib.pyplot as plt
+
+def debug_only(func, debug=False):
+    def wrap_func(*args, **kwargs):
+        if debug:
+            return func(*args, **kwargs)
+    return wrap_func
 
 def memReport():
     for obj in gc.get_objects():
         if torch.is_tensor(obj):
-            print(type(obj), obj.size(), obj.device)
+            logging.info(f"{type(obj)}, {obj.size()}, {obj.device}")
 
 def normalize_tensor(in_feat,eps=1e-10):
     norm_factor = torch.sqrt(torch.sum(in_feat**2,dim=1,keepdim=True))
@@ -66,11 +70,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--start_bb', type=int)
     parser.add_argument('--end_bb', type=int)
-    parser.add_argument('--row_idx', type=int, default=0)
-    parser.add_argument('--col_idx', type=int, default=0)
+    parser.add_argument('--log_path', type=str)
     parser.add_argument('--batch_step', type=int, default=6, help="how many data to process in this run")
-    parser.add_argument('--debug', type=bool, action='store_true')
+    parser.add_argument('--debug', default=False, action='store_true')
     args = parser.parse_args()
+    
+    loglevel = 'DEBUG' if args.debug else 'INFO'
+    logging.basicConfig(
+        filename=args.log_path,
+        level=loglevel,
+        format="%(asctime)s;%(levelname)s;%(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    memReport = debug_only(memReport, args.debug)
     
     r = TOTAL % DATA_BS
     n_batch = TOTAL // DATA_BS if r == 0 else TOTAL // DATA_BS + 1
@@ -79,7 +91,7 @@ if __name__ == "__main__":
     n_batch_batch = n_batch // args.batch_step if r_b == 0 else n_batch // args.batch_step + 1
     total_bb = (n_batch_batch + 1) * n_batch_batch / 2
     
-    print(r, n_batch, r_b, n_batch_batch, total_bb)
+    logging.info(f"{r}, {n_batch}, {r_b}, {n_batch_batch}, {total_bb}")
     
     assert 0 <= args.start_bb < args.end_bb <= total_bb
     ffhq = sorted(list(Path('~/data/FFHQ_feat/feat').expanduser().glob('*.pkl')))
@@ -100,13 +112,14 @@ if __name__ == "__main__":
                 continue
                 
             if args.start_bb <= idx < args.end_bb:
-                print("---"*15)
+                logging.debug("-"*10 + "begging" + "-"*10)
+                memReport()
                 dist = dict(idx=idx)
                 diffs = []
                 
                 if featX is None:
                     stepX = r_b if bi == (n_batch_batch - 1) else args.batch_step
-                    print(f"({bi},{bj},{idx}) load featX from ffhq[{bi*args.batch_step}] to ffhq[{bi * args.batch_step + stepX}]")
+                    logging.info(f"({bi},{bj},{idx}) load featX from ffhq[{bi*args.batch_step}] to ffhq[{bi * args.batch_step + stepX}]")
 
                     featX = [[],[],[],[],[]]
                     for i in range(bi*args.batch_step, bi*args.batch_step+stepX):
@@ -116,8 +129,11 @@ if __name__ == "__main__":
                     featX = [normalize_tensor(torch.cat(x, dim=0)) for x in featX]
                     del feat
                 
+                logging.debug("-"*10 + "featX loaded" + "-"*10)
+                memReport()
+                
                 stepY = r_b if bj == (n_batch_batch - 1) else args.batch_step
-                print(f"({bi},{bj},{idx}) load featY from ffhq[{bj*args.batch_step}] to ffhq[{bj * args.batch_step + stepY}]")
+                logging.info(f"({bi},{bj},{idx}) load featY from ffhq[{bj*args.batch_step}] to ffhq[{bj * args.batch_step + stepY}]")
                 
                 featY = [[],[],[],[],[]]
                 for i in range(bj*args.batch_step, bj*args.batch_step+stepY):
@@ -127,22 +143,31 @@ if __name__ == "__main__":
                 featY = [normalize_tensor(torch.cat(x, dim=0)) for x in featY]
                 del feat
                 
+                logging.debug("-"*10 + "featY loaded" + "-"*10)
+                memReport()
+                
                 with torch.no_grad():
-                    s = time()
                     b1 = featX[0].shape[0]
                     b2 = featY[0].shape[0]
                     for l in range(N_LAYER):
                         diff = (featX[l][None, :, :, :, :] - featY[l][:, None, :, :, :]) ** 2
                         diffs.append(diff.view(b1*b2, *diff.shape[2:]))
                     diff = None
-
+                    
+                    
+                    logging.debug("-"*10 + "get diff tensor" + "-"*10)
+                    memReport()
+                    
                     output = model(diffs, b1, b2).detach().cpu().numpy()
                     dist['diff'] = output.copy()
                     del output
 
                     distances.append(dist)
+               
+                logging.debug("-"*10 + "loop bottom" + "-"*10)
+                memReport()
             idx += 1
     
     pickle.dump(distances, open(out_name, 'wb'))
-    print(f"save result to {out_name}")
-    print(f"total: {time()-s :.2f} sec")
+    logging.info(f"save result to {out_name}")
+    logging.info(f"total: {time()-s :.2f} sec to compute {len(distances)} batchOfbatch")
