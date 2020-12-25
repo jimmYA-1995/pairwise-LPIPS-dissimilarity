@@ -72,6 +72,8 @@ if __name__ == "__main__":
     parser.add_argument('--end_bb', type=int)
     parser.add_argument('--log_path', type=str)
     parser.add_argument('--batch_step', type=int, default=6, help="how many data to process in this run")
+    parser.add_argument('--feat_dir', type=str, default='~/data/FFHQ/feat')
+    parser.add_argument('--out_dir', type=str, default='dists')
     parser.add_argument('--debug', default=False, action='store_true')
     args = parser.parse_args()
     
@@ -94,7 +96,7 @@ if __name__ == "__main__":
     logging.info(f"{r}, {n_batch}, {r_b}, {n_batch_batch}, {total_bb}")
     
     assert 0 <= args.start_bb < args.end_bb <= total_bb
-    ffhq = sorted(list(Path('~/data/FFHQ_feat/feat').expanduser().glob('*.pkl')))
+    ffhq = sorted(list(Path(args.feat_dir).expanduser().glob('*.pkl')))
     assert len(ffhq) == n_batch
     
     model = PIPS().cuda()
@@ -102,7 +104,7 @@ if __name__ == "__main__":
     
     idx = 0
     distances = []
-    out_name = f'dists/dist-{args.start_bb}-{args.end_bb}.pkl'
+    out_name = f'{args.out_dir}/dist-{args.start_bb}-{args.end_bb}.pkl'
     s = time()
     for bi in range(n_batch_batch):
         featX = None
