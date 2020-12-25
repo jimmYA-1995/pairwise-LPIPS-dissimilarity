@@ -1,0 +1,3 @@
+[submodule "pytorch_ssim"]
+	path = pytorch_ssim
+	url = https://github.com/Po-Hsun-Su/pytorch-ssim.git
