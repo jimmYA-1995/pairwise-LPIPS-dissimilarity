@@ -7,8 +7,12 @@ from pathlib import Path
 from time import time
 
 import numpy as np
+import skimage.io as io
 import torch
 import torch.nn as nn
+import sys
+sys.path.append('pytorch_ssim')
+from pytorch_ssim import SSIM
 
 def debug_only(func, debug=False):
     def wrap_func(*args, **kwargs):
@@ -17,62 +21,32 @@ def debug_only(func, debug=False):
     return wrap_func
 
 def memReport():
+    # https://discuss.pytorch.org/t/how-pytorch-releases-variable-garbage/7277
+    # https://discuss.pytorch.org/t/how-to-debug-causes-of-gpu-memory-leaks/6741/32
     for obj in gc.get_objects():
         if torch.is_tensor(obj):
             logging.info(f"{type(obj)}, {obj.size()}, {obj.device}")
+            
+def load_img(p, cuda=True):
+    img = io.imread(p).astype(np.float32) / 255.
+    img = img.transpose(2,0,1)[None, ...]
+    img = torch.from_numpy(img)
+    if cuda:
+        img = img.cuda()
+    return img
 
-def normalize_tensor(in_feat,eps=1e-10):
-    norm_factor = torch.sqrt(torch.sum(in_feat**2,dim=1,keepdim=True))
-    return in_feat/(norm_factor+eps)
-
-def spatial_average(in_tens, keepdim=True):
-    return in_tens.mean([2,3],keepdim=keepdim)
-
-class NetLinLayer(nn.Module):
-    ''' A single linear layer which does a 1x1 conv '''
-    def __init__(self, chn_in, chn_out=1, use_dropout=False):
-        super(NetLinLayer, self).__init__()
-
-        layers = [nn.Dropout(),] if(use_dropout) else []
-        layers += [nn.Conv2d(chn_in, chn_out, 1, stride=1, padding=0, bias=False),]
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.model(x)
-
-class PIPS(nn.Module):
-    def __init__(self):
-        super(PIPS, self).__init__()
-        ckpt = torch.load('alex.pth', map_location='cpu')
-        chs = [64,192,384,256,256]
-        self.L = len(chs)
-        lins = []
-        for i, ch in enumerate(chs):
-            setattr(self, f'lin{i}', NetLinLayer(ch, use_dropout=True))
-            lins.append(getattr(self, f'lin{i}'))
-        
-        self.load_state_dict(ckpt)
-        self.lins = nn.ModuleList(lins)
-        
-    def forward(self, diffs, b1, b2):
-        res = [spatial_average(self.lins[kk](diffs[kk]), keepdim=True) for kk in range(self.L)]
-        distance = torch.cat(res, dim=1).sum(dim=[1,2,3])
-
-        return distance.view(b1,b2)
-
-    
 
 if __name__ == "__main__":
-    N_LAYER = 5
+    N_LAYER = 1
     TOTAL = 70000
-    DATA_BS = 16
+    DATA_BS = 1
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--start_bb', type=int)
     parser.add_argument('--end_bb', type=int)
     parser.add_argument('--log_path', type=str)
     parser.add_argument('--batch_step', type=int, default=6, help="how many data to process in this run")
-    parser.add_argument('--feat_dir', type=str, default='~/data/FFHQ/feat')
+    parser.add_argument('--img_dir', type=str, default='~/data/FFHQ/images1024x1024')
     parser.add_argument('--out_dir', type=str, default='dists')
     parser.add_argument('--debug', default=False, action='store_true')
     args = parser.parse_args()
@@ -96,10 +70,10 @@ if __name__ == "__main__":
     logging.info(f"{r}, {n_batch}, {r_b}, {n_batch_batch}, {total_bb}")
     
     assert 0 <= args.start_bb < args.end_bb <= total_bb
-    ffhq = sorted(list(Path(args.feat_dir).expanduser().glob('*.pkl')))
-    assert len(ffhq) == n_batch
+    img_paths = sorted(list(Path(args.img_dir).expanduser().glob('*/*.png')))
+    assert len(img_paths) == n_batch
     
-    model = PIPS().cuda()
+    model = SSIM(size_average=False).cuda()
     model.eval()
     
     idx = 0
@@ -123,13 +97,12 @@ if __name__ == "__main__":
                     stepX = r_b if bi == (n_batch_batch - 1) else args.batch_step
                     logging.info(f"({bi},{bj},{idx}) load featX from ffhq[{bi*args.batch_step}] to ffhq[{bi * args.batch_step + stepX}]")
 
-                    featX = [[],[],[],[],[]]
+                    imgsX = []
                     for i in range(bi*args.batch_step, bi*args.batch_step+stepX):
-                        feat = pickle.loads(ffhq[i].read_bytes())
-                        for l in range(N_LAYER):
-                            featX[l].append(feat[l])
-                    featX = [normalize_tensor(torch.cat(x, dim=0)) for x in featX]
-                    del feat
+                        img = load_img(img_paths[i])
+                        imgsX.append(img)
+                    imgsX = torch.cat(imgsX, dim=0)
+                    del img
                 
                 logging.debug("-"*10 + "featX loaded" + "-"*10)
                 memReport()
@@ -137,32 +110,33 @@ if __name__ == "__main__":
                 stepY = r_b if bj == (n_batch_batch - 1) else args.batch_step
                 logging.info(f"({bi},{bj},{idx}) load featY from ffhq[{bj*args.batch_step}] to ffhq[{bj * args.batch_step + stepY}]")
                 
-                featY = [[],[],[],[],[]]
+                imgsY = []
                 for i in range(bj*args.batch_step, bj*args.batch_step+stepY):
-                    feat = pickle.loads(ffhq[i].read_bytes())
-                    for l in range(N_LAYER):
-                        featY[l].append(feat[l])
-                featY = [normalize_tensor(torch.cat(x, dim=0)) for x in featY]
-                del feat
+                    img = load_img(img_paths[i])
+                    imgsY.append(img)
+                imgsY = torch.cat(imgsY, dim=0)
+                del img
                 
                 logging.debug("-"*10 + "featY loaded" + "-"*10)
                 memReport()
                 
                 with torch.no_grad():
-                    b1 = featX[0].shape[0]
-                    b2 = featY[0].shape[0]
-                    for l in range(N_LAYER):
-                        diff = (featX[l][None, :, :, :, :] - featY[l][:, None, :, :, :]) ** 2
-                        diffs.append(diff.view(b1*b2, *diff.shape[2:]))
-                    diff = None
+                    b1 = imgsX.shape[0]
+                    b2 = imgsY.shape[0]
+                    featX = []
+                    featY = []
+                    for i in range(b1):
+                        for j in range(b2):
+                            featX.append(imgsX[i].unsqueeze(0))
+                            featY.append(imgsY[j].unsqueeze(0))
+                    featX = torch.cat(featX, dim=0)
+                    featY = torch.cat(featY, dim=0)
                     
+                    # print(featX.shape, featY.shape, featX.max(), featX.min(), featX.data.type())
+                    ssim_out = model(featX, featY).view(b1,b2).cpu().numpy()
                     
-                    logging.debug("-"*10 + "get diff tensor" + "-"*10)
-                    memReport()
-                    
-                    output = model(diffs, b1, b2).detach().cpu().numpy()
-                    dist['diff'] = output.copy()
-                    del output
+                    dist['diff'] = ssim_out.copy()
+                    del ssim_out
 
                     distances.append(dist)
                

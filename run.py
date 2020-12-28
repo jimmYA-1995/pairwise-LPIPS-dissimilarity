@@ -12,36 +12,42 @@ import sys
 import os
 
 # Only leave machine idx in cmd args.
-FEAT_DIR = '~/data/FFHQ/feat_face_crop'
-LOG_DIR = 'logs'
-OUT_DIR = 'dists'
+IMG_DIR = '~/data/FFHQ/images1024x1024'
+LOG_DIR = 'logs-ssim'
+OUT_DIR = 'dists-ssim'
 N_RECORDS = 70000 # FFHQ
 SPLITS = 80
-N_GPU = 8
-BATCH_SIZE=16 # depends on feat.pkl
-BLOCK_SIZE=6 # tune by yct (~30G gpu mem.)
+N_GPU = 1
+GPU_OFFSET=0
+BATCH_SIZE=1 # depends on feat.pkl
+BLOCK_SIZE=12 # tune by yct (~30G gpu mem.)
 
 b = math.ceil(N_RECORDS / (BATCH_SIZE * BLOCK_SIZE)) # b=730 in FFHQ
 total_blocks = (b+1) * b / 2
 r = total_blocks % SPLITS
-n = total_blocks // SPLITS
+n = int(total_blocks // SPLITS)
         
 async def run(machine_idx):
     fs = []
     procs = []
     
-    for gpu_idx, bb_idx in enumerate(range(N_GPU*machine_idx, N_GPU*(machine_idx+1))):
+    for gpu_idx, bb_idx in enumerate(range(N_GPU*machine_idx+GPU_OFFSET, N_GPU*(machine_idx+1))):
         print(f"process {n*bb_idx} ~ {n*(bb_idx+1)}")
         log_name = f'{LOG_DIR}/machine_{machine_idx}_gpu{gpu_idx}.log'
         procs.append(await asyncio.create_subprocess_shell(
             f"CUDA_VISIBLE_DEVICES={gpu_idx} " \
-            f"python compute_distance.py --start_bb {n*bb_idx} --end_bb {n*(bb_idx+1)} " \
-            f"--log_path {log_name} --feat_dir {FEAT_DIR} --out_dir {OUT_DIR}",
+            f"python compute_distance.py --start_bb {n*bb_idx} --end_bb {n*(bb_idx+1)} --batch_step {BLOCK_SIZE} " \
+            f"--log_path {log_name} --img_dir {IMG_DIR} --out_dir {OUT_DIR}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         ))
         
     for i, proc in enumerate(procs):
+        # stdout, stderr = await proc.communicate()
+        # if proc.returncode != 0:
+        #     print(i)
+        #     print(stdout.decode('utf-8'))
+        #     print(stderr.decode('utf-8'))
         await proc.wait()
         print(f'proc {i} [exited with {proc.returncode}]')
         
