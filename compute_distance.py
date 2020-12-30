@@ -66,6 +66,10 @@ if __name__ == "__main__":
     r_b = n_batch % args.batch_step
     n_batch_batch = n_batch // args.batch_step if r_b == 0 else n_batch // args.batch_step + 1
     total_bb = (n_batch_batch + 1) * n_batch_batch / 2
+    print("n_batch:", n_batch)
+    print("r_b:", r_b)
+    print("n_batch_batch:", n_batch_batch)
+    print("total_bb:", total_bb)
     
     logging.info(f"{r}, {n_batch}, {r_b}, {n_batch_batch}, {total_bb}")
     
@@ -99,6 +103,7 @@ if __name__ == "__main__":
 
                     imgsX = []
                     for i in range(bi*args.batch_step, bi*args.batch_step+stepX):
+                        print(f"Xi: {bi*args.batch_step} ~ {bi*args.batch_step+stepX}")
                         img = load_img(img_paths[i])
                         imgsX.append(img)
                     imgsX = torch.cat(imgsX, dim=0)
@@ -112,6 +117,7 @@ if __name__ == "__main__":
                 
                 imgsY = []
                 for i in range(bj*args.batch_step, bj*args.batch_step+stepY):
+                    print(f"Yi: {bj*args.batch_step} ~ {bj*args.batch_step+stepY}")
                     img = load_img(img_paths[i])
                     imgsY.append(img)
                 imgsY = torch.cat(imgsY, dim=0)
